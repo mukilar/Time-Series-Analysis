@@ -1,0 +1,403 @@
+---
+title: "DSC 551 Final Project"
+output:
+  html_document:
+    df_print: paged
+---
+# "Ditching Coal: How the United States Is Moving Away from One Fossil Fuel"
+
+## Student Name: Mukila Rajasekar
+
+```{r}
+library('fpp2')
+library('readxl')
+library('seasonal')
+library('tseries')
+```
+
+## Loading and Cleaning the dataset
+
+The dataset is taken from the following source,
+https://www.eia.gov/totalenergy/data/monthly/
+The dataset shows the U.S. National Monthly Net Electricity Generation from Coal in Million kWh (Jan 1995 - Jun 2020)
+
+```{r}
+df <- read_excel("C:\\Users\\mr4060\\Desktop\\DSC551-Spatial Temporal Analysis\\Finals\\Electricity_Net_Generation__Total_(All_Sectors).xlsx")
+head(df)
+```
+
+Let's convert the 'Netelectricitygeneration_fromcoal' column into time series for our analysis.
+```{r}
+coal <- ts(data = df$Netelectricitygeneration_fromcoal, start=c(1995,1),frequency=12)
+tail(coal) #Time series dataset
+```
+## Exploring the time series
+
+```{r}
+#Structure of the time series
+str(coal)
+paste('Frequency:', frequency(coal))
+paste('Is it timeseries?',is.ts(coal))
+summary(coal)
+```
+```{r}
+#Basic Plotting
+autoplot(coal)+
+  xlab("DateTime") + ylab("Net Electricity Generated (Million kWh)") +
+  ggtitle("U.S. National Monthly Net Electricity Generation from Coal (1995 - 2020)")
+```
+```{r}
+#Basic Plotting with smooth line
+autoplot(coal)+geom_smooth() +
+  xlab("DateTime") + ylab("Net Electricity Generated (Million kWh)") +
+  ggtitle("U.S. National Monthly Net Electricity Generation from Coal (1995 - 2020)")
+```
+
+From these plots, it is clear that the electricity generation using coal has a clear trend. The overall electricity generation is decreasing rapidly in the last decade.
+
+```{r}
+#Season Plot to explore monthly behavior
+ggseasonplot(coal,continuous = TRUE)+
+  xlab("Month") + ylab("Net Electricity Generated (Million kWh)") +
+  ggtitle("Season Plot")
+```
+
+The season plot shows visible seasonality within each year. The electricity generation seems to increase during the summer and the winter months. Electricity generation is lowest during the spring months.
+
+```{r}
+#This will aggregate the cycles and display a year on year trend
+autoplot(aggregate(coal,FUN=mean))+
+  xlab("DateTime") + ylab("Net Electricity Generated (Million kWh)") +
+  ggtitle("Aggregate of Monthly Cycle")
+```
+From this aggregate plot, we can see that electricity generation using coal was popular in the late 20th century and first few years in 21st century. Over the past decade, coal usage for electricity generation has decreased rapidly and continues to decrease even more in 2020.
+
+```{r}
+boxplot(coal~cycle(coal))
+```
+This box plot shows that the mean and variance change between months. July and August have the highest means and March and April have the biggest variance. This shows that our time series has a strong seasonal effect.
+
+```{r}
+#ACF and PACF plots
+tsdisplay(coal)
+ggAcf(coal)
+```
+```{r}
+#Boundary Value
+T <- length(coal)
+1.96/sqrt(T)
+paste('Mean:',mean(coal))
+paste('Variance:',var(coal))
+paste('Standard Deviation:',sd(coal))
+```
+From the Acf plot, we can confirm that the series is not white noise since all the lag spikes lie outside ±1.96/√T which is + or - 0.1120457. ACF plot shows the time series has trend and seasonality.
+
+```{r}
+gglagplot(coal,lags = 12)
+```
+gglagplot shows positive relationships at lag 12 reflecting strong seasonality in the data.
+
+## Basic Forecasting
+
+For testing the forecasting methods, let us split the data into training set and testing set based on 80/20 method. i.e. 80% of the data is used for training and 20% is retained as testing set. We have about 25yrs in our dataset, so I am going to keep the last 5 years as a testing set and use the remaining data for training the forecast models.
+```{r}
+coal_train <- subset(coal, end = length(coal)-60)
+coal_test <- subset(coal, start = length(coal)-59)
+str(coal_train)
+str(coal_test)
+```
+### Four Benchmark Forecasting Methods
+
+Let's perform all 4 benchmark forecasting methods on the training set and test their accuracy on the testing set.
+-Naive Method
+-Seasonal Naive Method
+-Average Method
+-Drift Method
+
+```{r}
+h=60
+coal_train1 <- naive(coal_train, h)
+coal_train2 <- snaive(coal_train, h)
+coal_train3 <- meanf(coal_train, h)
+coal_train4 <- rwf(coal_train, h, drift = TRUE)
+                        
+autoplot(coal_train) +
+  autolayer(coal_train1, PI = FALSE, series="Naive")+
+  autolayer(coal_train2, PI = FALSE, series="Seasonal Naive")+
+  autolayer(coal_train3, PI = FALSE, series="Average")+
+  autolayer(coal_train4, PI = FALSE, series="Drift")+
+  xlab("DateTime") + ylab("Net Electricity Generated (Million kWh)")+
+  ggtitle("Basic Forecasting")+
+  guides(colour=guide_legend(title="Forecast Method"))
+```
+```{r}
+#Comparing accuracy of forecasting methods
+ar.naive <- accuracy(coal_train1, coal_test)
+ar.snaive <- accuracy(coal_train2, coal_test)
+ar.mean <- accuracy(coal_train3, coal_test)
+ar.drift <- accuracy(coal_train4, coal_test)
+RMSE=c(ar.mean["Test set","RMSE"],ar.naive["Test set","RMSE"],ar.snaive["Test set","RMSE"],ar.drift["Test set","RMSE"])
+MAE = c(ar.mean["Test set","MAE"],ar.naive["Test set","MAE"],ar.snaive["Test set","MAE"],ar.drift["Test set","MAE"])
+MAPE = c(ar.mean["Test set","MAPE"],ar.naive["Test set","MAPE"],ar.snaive["Test set","MAPE"],ar.drift["Test set","MAPE"])
+MASE = c(ar.mean["Test set","MASE"],ar.naive["Test set","MASE"],ar.snaive["Test set","MASE"],ar.drift["Test set","MASE"])
+results <-data.frame(RMSE,MAE,MAPE,MASE, row.names = c("Mean","Naive","Seasonal Naive","Drift"))
+results
+```
+From the above table, we can see that the **Seasonal Naive Method** performs better than the other methods.
+
+Let's compare the seasonal prediction with the actual test values.
+```{r}
+autoplot(coal_train) + autolayer(coal_test,series = "Test set") + autolayer(coal_train2, PI=FALSE, series = "Snaive") +
+  xlab("DateTime") + ylab("Net Electricity Generated (Million kWh)")
+```
+```{r}
+checkresiduals(coal_train2)
+```
+Again not white noise.
+
+Let's repeat the above 4 forecasting methods using cross-validation and see seasonal method is still the best.
+```{r}
+h=60
+fd <- tsCV(coal, rwf, drift=TRUE, h)
+paste("Drift RSME:", sqrt(mean(fd^2, na.rm=TRUE)))
+fna <- tsCV(coal, naive, h)
+paste("Naive RSME:",sqrt(mean(fna^2, na.rm=TRUE)))
+fsna <- tsCV(coal, snaive, h)
+paste("Snaive RSME:",sqrt(mean(fsna^2, na.rm=TRUE)))
+fm <- tsCV(coal, meanf, h)
+paste("Average RSME:",sqrt(mean(fm^2, na.rm=TRUE)))
+```
+Cross-validation method also confirms that snaive method is the best out of the 4 basic methods.
+```{r}
+coal_train %>% snaive(h=60) %>% autoplot()
+```
+## Decomposition
+
+A seasonal time series consists of a trend component, a seasonal component and an irregular component. Decomposing the time series means separating the time series into these three components and estimating their values.
+
+Electricity Generation using Coal has changed drastically over time in our time series and Classical Decomposition methods are unable to capture seasonal changes over time.
+X11, SEATS and STL methods might be best suited for our time series.
+
+### X11
+```{r}
+at.x11 <- seas(coal, x11="")
+autoplot(at.x11) + xlab("DataTime") + ylab("Original Series and 3 Components") +
+  ggtitle("X11")
+```
+### SEATS
+```{r}
+at.s <- seas(coal)
+autoplot(at.s) + xlab("DataTime") + ylab("Original Series and 3 Components") +
+  ggtitle("SEATS")
+```
+### STL
+```{r}
+at.stl <- stl(coal, s.window=10, t.window= 10, robust = TRUE)
+autoplot(at.stl) + xlab("DataTime") + ylab("Original Series and 3 Components") +
+  ggtitle("STL")
+```
+```{r}
+ggsubseriesplot(seasonal(at.stl))
+```
+
+STL Decomposition method with s.window = 10 and t.window = 10 seems to capture the trend of the time series better than other methods. Let's use this stl method to do some forecasting.
+Holt' Linear Method extends simple exponential smoothing to allow the forecasting of data with a trend.
+I'm using Holt's Linear trend method and snaive method to forecast the seasonally adjusted series.
+
+```{r}
+cstl <- at.stl <- stl(coal_train, s.window=10, t.window= 10, robust = TRUE)
+cstl.noseas <- seasadj(cstl) #Seasonality removed
+cstl.seas <- seasonal(cstl)
+
+#Holt's method with damped trend on noseas data
+cstl.noseas.fit <- holt(cstl.noseas, h=60, damped = TRUE)
+
+#snaive on seas data
+cstl.seas.fit <- snaive(cstl.seas, h=60)
+
+#Plot
+autoplot(coal) +
+  autolayer(cstl.noseas.fit$mean+cstl.seas.fit$mean, series="Holt's + snaive Methods") +
+  ggtitle("Forecasts after STL Decomposition") + xlab("DateTime") +
+  ylab("Net Electricity Generated (Million kWh)")
+
+#Accuracy
+cstl.acc <- accuracy(cstl.noseas.fit$mean+cstl.seas.fit$mean,coal_test)
+
+RMSE=c(ar.mean["Test set","RMSE"],ar.naive["Test set","RMSE"],ar.snaive["Test set","RMSE"],ar.drift["Test set","RMSE"],cstl.acc["Test set","RMSE"])
+
+MAE = c(ar.mean["Test set","MAE"],ar.naive["Test set","MAE"],ar.snaive["Test set","MAE"],ar.drift["Test set","MAE"],cstl.acc["Test set","MAE"])
+results1 <-data.frame(RMSE,MAE, row.names = c("Mean","Naive","Seasonal Naive","Drift","STL on Holt's + snaive"))
+results1
+```
+
+From this we can conclude that applying stl decomposition on Holt's Linear + snaive methods provides much lower errors than the forecasting methods before decomposition.
+
+Holt-Winters Method extends Holt’s method to capture seasonality. The Holt-Winters seasonal method comprises the forecast equation and three smoothing equations — level, trend and seasonal component with corresponding smoothing parameters $\alpha, \beta\ and \ \gamma$.
+The additive method is preferred when the seasonal variations are roughly constant through the series, while the multiplicative method is preferred when the seasonal variations are changing proportional to the level of the series.
+```{r}
+cfitm <- hw(coal_train,seasonal="multiplicative",h=60,damped=TRUE)
+autoplot(cfitm) +
+  ggtitle("Forecasts from Holt-Winter's Method") + xlab("DateTime") +
+  ylab("Net Electricity Generated (Million kWh)")
+
+#Accuracy
+cfitm.acc <- accuracy(cfitm,coal_test)
+
+RMSE=c(ar.mean["Test set","RMSE"],ar.naive["Test set","RMSE"],ar.snaive["Test set","RMSE"],ar.drift["Test set","RMSE"],cstl.acc["Test set","RMSE"],cfitm.acc["Test set","RMSE"])
+
+MAE = c(ar.mean["Test set","MAE"],ar.naive["Test set","MAE"],ar.snaive["Test set","MAE"],ar.drift["Test set","MAE"],cstl.acc["Test set","MAE"],cfitm.acc["Test set","MAE"])
+
+results2 <-data.frame(RMSE,MAE, row.names = c("Mean","Naive","Seasonal Naive","Drift","STL on Holt's + snaive","Holt-Winters"))
+results2
+```
+
+## Forecasting using ETS
+
+Error={A,M}, Trend={N,A,Ad}, and Seasonal={N,A,M}
+```{r}
+ets1 <- ets(coal_train, ic = 'aic', damped = TRUE, restrict = FALSE) #Based on best aic value
+ets1
+```
+
+```{r}
+ets1.fcst <- forecast(ets1,h=60)
+ets1.acc <- accuracy(ets1.fcst,coal_test)
+autoplot(ets1.fcst)+xlab("DateTime") +
+  ylab("Net Electricity Generated (Million kWh)")
+
+#Accuracy
+RMSE=c(ar.mean["Test set","RMSE"],ar.naive["Test set","RMSE"],ar.snaive["Test set","RMSE"],ar.drift["Test set","RMSE"],cstl.acc["Test set","RMSE"],cfitm.acc["Test set","RMSE"],ets1.acc["Test set","RMSE"])
+
+MAE = c(ar.mean["Test set","MAE"],ar.naive["Test set","MAE"],ar.snaive["Test set","MAE"],ar.drift["Test set","MAE"],cstl.acc["Test set","MAE"],cfitm.acc["Test set","MAE"],ets1.acc["Test set","MAE"])
+
+results3 <-data.frame(RMSE,MAE, row.names = c("Mean","Naive","Seasonal Naive","Drift","STL on Holt's + snaive","Holt-Winters","ETS(A,Ad,A)"))
+results3
+```
+Ets method with 'AAA' model and damped trend seems to perform better than Holt-Winters Multiplicative method. But they are both almost similar.
+```{r}
+checkresiduals(ets1.fcst)
+```
+
+## ARIMA
+
+While exponential smoothing models are based on a description of the trend and seasonality in the data, ARIMA models aim to describe the autocorrelations in the data.
+
+Let's first check if the time series needs differencing or not.
+```{r}
+adf.test(coal_train)
+```
+The p-value in ADF Test is not small enough so the data is not stationary. We need differencing.
+
+Let's try seasonal differencing and repeat the above steps
+```{r}
+autoplot(diff(coal_train,lag=12)) + ggtitle('Seasonal Differencing')
+```
+```{r}
+adf.test(diff(coal_train,lag=12))
+```
+This proves that the time series is not stationary by default and needs differencing to become stationary.
+```{r}
+ggtsdisplay(diff(diff(coal_train,lag=12)),lag.max=24)
+```
+The ACF shows significant spike at lag 12 and PACF shows significant spikes at lag 12 and 24.
+```{r}
+fit1 <- arima(coal_train,order = c(2,1,1),seasonal = c(1,1,2)) 
+summary(fit1)
+```
+Let's try a few more arima models.
+
+```{r}
+fit2 <- arima(coal_train,order = c(3,1,3),seasonal = c(1,1,2)) 
+summary(fit2)
+```
+```{r}
+fit3 <- arima(coal_train,order = c(1,1,0),seasonal = c(0,1,2)) 
+summary(fit3)
+```
+```{r}
+fit2 %>% checkresiduals(lag.max=24)
+```
+
+ARIMA(3,1,3)(1,1,2)[12] is the best ARIMA model out of the 3.
+
+```{r}
+autoplot(forecast(fit2,h=60))+xlab("DateTime") +
+  ylab("Net Electricity Generated (Million kWh)")
+```
+```{r}
+#Accuracy
+fit2.acc <- accuracy(forecast(fit2,h=60),coal_test)
+
+RMSE=c(ar.mean["Test set","RMSE"],ar.naive["Test set","RMSE"],ar.snaive["Test set","RMSE"],ar.drift["Test set","RMSE"],cstl.acc["Test set","RMSE"],cfitm.acc["Test set","RMSE"],ets1.acc["Test set","RMSE"],fit2.acc["Test set","RMSE"])
+
+MAE = c(ar.mean["Test set","MAE"],ar.naive["Test set","MAE"],ar.snaive["Test set","MAE"],ar.drift["Test set","MAE"],cstl.acc["Test set","MAE"],cfitm.acc["Test set","MAE"],ets1.acc["Test set","MAE"],fit2.acc["Test set","MAE"])
+
+results4 <-data.frame(RMSE,MAE, row.names = c("Mean","Naive","Seasonal Naive","Drift","STL on Holt's + snaive","Holt-Winters","ETS(A,Ad,A)","ARIMA(3,1,3)(1,1,2)[12]"))
+results4
+```
+From the accuracy measures, we can see that the ARIMA model performs much better than the rest.
+
+Let's do a cross validation on the ETS and ARIMA models and compare them again.
+
+```{r}
+fets <- function(x, h) {
+  forecast(ets(x), h=h)
+}
+farima <- function(x, h) {
+  forecast(auto.arima(x), h=h)
+}
+```
+
+Computing Errors for all the methods
+```{r}
+e1<-tsCV(coal,fets,h=1)
+e2<-tsCV(coal,farima,h=1)
+```
+
+Root Mean Squared Error
+```{r}
+rmse<-c(sqrt(mean(e1^2,na.rm=TRUE)),
+sqrt(mean(e2^2,na.rm=TRUE)))
+names(rmse)=c("ETS","ARIMA")
+rmse
+```
+
+From the cross validations results we can confirm that the ARIMA model has the lowest RSME out of all the forecasting models we have tried so far.
+
+```{r}
+autoplot(coal_train) +autolayer(coal_test, series = "Actual")+ autolayer(forecast(fit2,h=60), series = "ARIMA")+xlab("DateTime") +  ylab("Net Electricity Generated (Million kWh)") + ggtitle("ARIMA Model vs Actual Values")
+```
+AS we can see from the above graph, the arima model has a good enough prediction interval that covers most of the actual values. This shows that the selected arima model is a good one.
+
+Let's use this selected arima model on the entire dataset and forecast the Net Electricity Generation using Coal for the next 5yrs in the future.
+```{r}
+best <- arima(coal,order = c(3,1,3),seasonal = c(1,1,2))
+f.best <- forecast(best,h=60)
+
+autoplot(coal) + autolayer(f.best, series = "ARIMA Forecast") + 
+  xlab("DateTime") + 
+  ylab("Net Electricity Generated (Million kWh)") + 
+  ggtitle("Forecast for Next 5 years(Jul 2020 - Jul 2025)")
+```
+```{r}
+f.best
+```
+
+The final selected arima model has projected electricity generation using coal to decrease even more rapidly in the next 5 years.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
